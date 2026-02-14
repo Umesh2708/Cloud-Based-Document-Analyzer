@@ -172,12 +172,14 @@
                     <div class="upload-hint">Click to browse or drag & drop</div>
                 </label>
             </div>
+
             <div class="selected-file" id="selectedFile">
                 <span class="file-icon">📎</span>
                 <span class="file-name" id="fileName"></span>
                 <button class="remove-file" onclick="removeFile(); event.stopPropagation();" title="Remove file">✕</button>
             </div>
-            <button onclick="uploadFile()">Analyze Document</button>
+
+            <button id="analyzeBtn" onclick="uploadFile()">Analyze Document</button>
         </div>
 
         <pre id="result"></pre>
@@ -185,87 +187,131 @@
 
 <script>
 /*
-IMPORTANT:
-Replace these two URLs with your real API Gateway endpoints.
+YOUR API ENDPOINTS (Already given by you)
 */
+const GET_UPLOAD_URL_API = "https://850zei4pe5.execute-api.us-east-1.amazonaws.com/get-upload-url";
+const ANALYZE_API = "https://850zei4pe5.execute-api.us-east-1.amazonaws.com/analyze";
+
+const fileInput = document.getElementById('fileInput');
+const resultBox = document.getElementById('result');
+const analyzeBtn = document.getElementById('analyzeBtn');
+
+// Show selected file name
+fileInput.addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (file) {
+        document.getElementById('fileName').textContent = file.name;
+        document.getElementById('selectedFile').classList.add('show');
+    }
+});
+
+function removeFile() {
+    fileInput.value = '';
+    document.getElementById('selectedFile').classList.remove('show');
+    resultBox.textContent = '';
+}
+
+// Safe JSON parse
+async function safeJson(res) {
+    const text = await res.text();
+    try { return JSON.parse(text); }
+    catch { return { raw: text }; }
+}
+
 async function uploadFile() {
-    const fileInput = document.getElementById('fileInput');
     const file = fileInput.files[0];
 
-    if (!file) return alert("Please select a file to upload");
+    if (!file) return alert("Please select a .txt file");
 
-    // Only allow txt
-    if (!file.name.endsWith(".txt")) {
+    if (!file.name.toLowerCase().endsWith(".txt")) {
         return alert("Please upload only .txt file for this version.");
     }
 
-    const btn = document.querySelector('button');
-    const originalText = btn.textContent;
+    const originalText = analyzeBtn.textContent;
 
-    btn.textContent = 'Processing...';
-    btn.disabled = true;
-    document.getElementById('result').textContent = 'Uploading and analyzing...';
+    analyzeBtn.textContent = "Processing...";
+    analyzeBtn.disabled = true;
+    resultBox.textContent = "Uploading and analyzing...";
 
     try {
-        // ✅ Step 1: Ask backend for pre-signed upload URL
-        const GET_UPLOAD_URL_API = "https://850zei4pe5.execute-api.us-east-1.amazonaws.com/get-upload-url";
-        const ANALYZE_API = "https://850zei4pe5.execute-api.us-east-1.amazonaws.com/analyze";
-
-        const fileName = file.name;
-
+        // 1) Get presigned URL
         const presignRes = await fetch(GET_UPLOAD_URL_API, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ fileName: fileName })
+            body: JSON.stringify({ fileName: file.name })
         });
 
-        const presignData = await presignRes.json();
+        if (!presignRes.ok) {
+            const err = await safeJson(presignRes);
+            throw new Error("Presign API failed: " + JSON.stringify(err));
+        }
 
-        // presignData = { uploadUrl, bucket, key }
-        const uploadUrl = presignData.uploadUrl;
-        const bucket = presignData.bucket;
-        const key = presignData.key;
+        const presignData = await safeJson(presignRes);
 
-        // ✅ Step 2: Upload file directly to S3 using PUT
-        const uploadRes = await fetch(uploadUrl, {
+        if (!presignData.uploadUrl || !presignData.bucket || !presignData.key) {
+            throw new Error("Presign API returned wrong format: " + JSON.stringify(presignData));
+        }
+
+        // 2) Upload to S3 using PUT
+        const uploadRes = await fetch(presignData.uploadUrl, {
             method: "PUT",
             headers: { "Content-Type": "text/plain" },
             body: file
         });
 
         if (!uploadRes.ok) {
-            throw new Error("S3 Upload Failed");
+            throw new Error("S3 upload failed. Status: " + uploadRes.status);
         }
 
-        // ✅ Step 3: Call analyze API (Lambda will read file from S3)
+        // 3) Analyze document
         const analyzeRes = await fetch(ANALYZE_API, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ bucket: bucket, key: key })
+            body: JSON.stringify({ bucket: presignData.bucket, key: presignData.key })
         });
 
-        const analyzeData = await analyzeRes.json();
+        if (!analyzeRes.ok) {
+            const err = await safeJson(analyzeRes);
+            throw new Error("Analyze API failed: " + JSON.stringify(err));
+        }
 
-        // analyzeData = { summary, sentiment, entities, keyPhrases }
-        document.getElementById('result').textContent =
-            "📌 SUMMARY:\n" + analyzeData.summary + "\n\n" +
-            "😊 SENTIMENT:\n" + analyzeData.sentiment + "\n\n" +
-            "🏷️ ENTITIES:\n" + analyzeData.entities.join(", ") + "\n\n" +
-            "🔑 KEY PHRASES:\n" + analyzeData.keyPhrases.join(", ");
+        const analyzeData = await safeJson(analyzeRes);
+
+        // Accept both formats:
+        // A) {summary, sentiment, entities, keyPhrases}
+        // B) {body: "{...json...}"}  (Lambda proxy)
+        let finalData = analyzeData;
+
+        if (analyzeData.body) {
+            try { finalData = JSON.parse(analyzeData.body); } catch {}
+        }
+
+        // Human readable output
+        const summary = finalData.summary || "No summary generated.";
+        const sentiment = finalData.sentiment || "Not detected";
+        const entities = Array.isArray(finalData.entities) ? finalData.entities : [];
+        const keyPhrases = Array.isArray(finalData.keyPhrases) ? finalData.keyPhrases : [];
+
+        resultBox.textContent =
+            "📌 SUMMARY\n" +
+            summary + "\n\n" +
+            "😊 SENTIMENT\n" +
+            sentiment + "\n\n" +
+            "🏷️ ENTITIES\n" +
+            (entities.length ? entities.join(", ") : "No entities found") + "\n\n" +
+            "🔑 KEY PHRASES\n" +
+            (keyPhrases.length ? keyPhrases.join(", ") : "No key phrases found");
 
     } catch (e) {
         console.error(e);
-        document.getElementById('result').textContent =
-            "Error: Could not analyze document.\n\nTip: Upload only .txt file for this version.";
+        resultBox.textContent =
+            "❌ ERROR\n" + e.message + "\n\n" +
+            "Tip: Make sure CORS is enabled in HTTP API and Lambda returns correct JSON.";
     } finally {
-        btn.textContent = originalText;
-        btn.disabled = false;
+        analyzeBtn.textContent = originalText;
+        analyzeBtn.disabled = false;
     }
 }
-
 </script>
 </body>
 </html>
-
-
-
