@@ -188,85 +188,84 @@
 IMPORTANT:
 Replace these two URLs with your real API Gateway endpoints.
 */
-const GET_UPLOAD_URL_API = "https://850zei4pe5.execute-api.us-east-1.amazonaws.com/prod/get-upload-url";
-const ANALYZE_API = "https://850zei4pe5.execute-api.us-east-1.amazonaws.com/prod/analyze";
-
-// Handle file selection display
-document.getElementById('fileInput').addEventListener('change', function(e) {
-    const file = e.target.files[0];
-    if (file) {
-        document.getElementById('fileName').textContent = file.name;
-        document.getElementById('selectedFile').classList.add('show');
-    }
-});
-
-function removeFile() {
-    document.getElementById('fileInput').value = '';
-    document.getElementById('selectedFile').classList.remove('show');
-}
-
 async function uploadFile() {
     const fileInput = document.getElementById('fileInput');
     const file = fileInput.files[0];
-    if(!file) return alert("Please select a file to upload");
+
+    if (!file) return alert("Please select a file to upload");
+
+    // Only allow txt
+    if (!file.name.endsWith(".txt")) {
+        return alert("Please upload only .txt file for this version.");
+    }
 
     const btn = document.querySelector('button');
     const originalText = btn.textContent;
-    
+
     btn.textContent = 'Processing...';
     btn.disabled = true;
     document.getElementById('result').textContent = 'Uploading and analyzing...';
 
     try {
-        // 1) Get presigned URL from backend
+        // ✅ Step 1: Ask backend for pre-signed upload URL
+        const GET_UPLOAD_URL_API = "https://850zei4pe5.execute-api.us-east-1.amazonaws.com/get-upload-url";
+        const ANALYZE_API = "https://850zei4pe5.execute-api.us-east-1.amazonaws.com/analyze";
+
+        const fileName = file.name;
+
         const presignRes = await fetch(GET_UPLOAD_URL_API, {
             method: "POST",
-            headers: {"Content-Type":"application/json"},
-            body: JSON.stringify({
-                fileName: file.name,
-                fileType: file.type || "text/plain"
-            })
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fileName: fileName })
         });
 
         const presignData = await presignRes.json();
-        const presignBody = JSON.parse(presignData.body);
 
-        const uploadUrl = presignBody.uploadUrl;
-        const s3Key = presignBody.key;
+        // presignData = { uploadUrl, bucket, key }
+        const uploadUrl = presignData.uploadUrl;
+        const bucket = presignData.bucket;
+        const key = presignData.key;
 
-        // 2) Upload file to S3 using presigned URL
+        // ✅ Step 2: Upload file directly to S3 using PUT
         const uploadRes = await fetch(uploadUrl, {
             method: "PUT",
-            headers: {"Content-Type": file.type || "text/plain"},
+            headers: { "Content-Type": "text/plain" },
             body: file
         });
 
         if (!uploadRes.ok) {
-            throw new Error("S3 upload failed");
+            throw new Error("S3 Upload Failed");
         }
 
-        // 3) Call analyze API
+        // ✅ Step 3: Call analyze API (Lambda will read file from S3)
         const analyzeRes = await fetch(ANALYZE_API, {
             method: "POST",
-            headers: {"Content-Type":"application/json"},
-            body: JSON.stringify({ key: s3Key })
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ bucket: bucket, key: key })
         });
 
         const analyzeData = await analyzeRes.json();
-        const analyzeBody = JSON.parse(analyzeData.body);
 
-        document.getElementById('result').textContent = analyzeBody.summary;
+        // analyzeData = { summary, sentiment, entities, keyPhrases }
+        document.getElementById('result').textContent =
+            "📌 SUMMARY:\n" + analyzeData.summary + "\n\n" +
+            "😊 SENTIMENT:\n" + analyzeData.sentiment + "\n\n" +
+            "🏷️ ENTITIES:\n" + analyzeData.entities.join(", ") + "\n\n" +
+            "🔑 KEY PHRASES:\n" + analyzeData.keyPhrases.join(", ");
 
     } catch (e) {
         console.error(e);
-        document.getElementById('result').textContent = "Error: Could not analyze document.\n\nTip: Upload only .txt file for this version.";
+        document.getElementById('result').textContent =
+            "Error: Could not analyze document.\n\nTip: Upload only .txt file for this version.";
     } finally {
         btn.textContent = originalText;
         btn.disabled = false;
     }
 }
+
 </script>
 </body>
 </html>
+
 
 
