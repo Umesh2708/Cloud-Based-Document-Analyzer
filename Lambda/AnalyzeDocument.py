@@ -9,7 +9,7 @@ comprehend = boto3.client("comprehend")
 dynamodb = boto3.resource("dynamodb")
 
 UPLOAD_BUCKET = os.environ["UPLOAD_BUCKET"]
-TABLE_NAME = os.environ.get("TABLE_NAME")
+TABLE_NAME = os.environ.get("TABLE_NAME")  # optional
 
 def lambda_handler(event, context):
     try:
@@ -23,16 +23,14 @@ def lambda_handler(event, context):
         obj = s3.get_object(Bucket=UPLOAD_BUCKET, Key=key)
         raw_bytes = obj["Body"].read()
 
-        # Support only TXT for simplest free deployment
-        # (PDF needs extra library/layer, I can give that also)
+        # Only TXT (PDF needs Textract)
         text = raw_bytes.decode("utf-8", errors="ignore")
-
         text = clean_text(text)
 
         if len(text) < 5:
             return response(400, {"error": "File has no readable text."})
 
-        # AWS Comprehend has input size limits
+        # Comprehend input limit safe size
         text_for_ai = text[:4500]
 
         entities = comprehend.detect_entities(Text=text_for_ai, LanguageCode="en")["Entities"]
@@ -81,7 +79,13 @@ def lambda_handler(event, context):
                 "timestamp": datetime.utcnow().isoformat()
             })
 
-        return response(200, {"summary": summary})
+        # IMPORTANT: return all fields (frontend needs it)
+        return response(200, {
+            "summary": summary,
+            "sentiment": sentiment,
+            "entities": top_entities,
+            "keyPhrases": top_phrases
+        })
 
     except Exception as e:
         return response(500, {"error": str(e)})
@@ -94,10 +98,13 @@ def clean_text(t):
 def response(code, body):
     return {
         "statusCode": code,
-        "headers": {
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "Content-Type",
-            "Access-Control-Allow-Methods": "OPTIONS,POST"
-        },
+        "headers": cors_headers(),
         "body": json.dumps(body)
+    }
+
+def cors_headers():
+    return {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Methods": "OPTIONS,POST"
     }
