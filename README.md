@@ -219,20 +219,6 @@ After uploading a `.txt` document, the frontend displays:
 All output is shown in a **clear, human-readable format**.
 
 ---
-
-## 📘 Case Study Notes
-
-This project is suitable as a **Cloud Computing case study** because it demonstrates:
-
-- Serverless architecture  
-- Secure file uploads using pre-signed URLs  
-- NLP analysis using AWS Comprehend  
-- Event-driven backend using Lambda  
-- Optional data persistence using DynamoDB  
-- Frontend deployment using AWS Amplify  
-
----
-
 ## 👨‍💻 Author
    Umesh Saini
    AWS Project
