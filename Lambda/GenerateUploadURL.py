@@ -8,39 +8,44 @@ s3 = boto3.client("s3")
 UPLOAD_BUCKET = os.environ["UPLOAD_BUCKET"]
 
 def lambda_handler(event, context):
-    body = json.loads(event.get("body", "{}"))
-    file_name = body.get("fileName")
-    file_type = body.get("fileType")
+    try:
+        body = json.loads(event.get("body", "{}"))
 
-    if not file_name:
-        return {
-            "statusCode": 400,
-            "headers": cors_headers(),
-            "body": json.dumps({"error": "fileName is required"})
-        }
+        file_name = body.get("fileName")
+        file_type = body.get("fileType", "text/plain")
 
-    file_id = str(uuid.uuid4())
-    safe_name = file_name.replace(" ", "_")
-    s3_key = f"uploads/{file_id}_{safe_name}"
+        if not file_name:
+            return response(400, {"error": "fileName is required"})
 
-    presigned_url = s3.generate_presigned_url(
-        ClientMethod="put_object",
-        Params={
-            "Bucket": UPLOAD_BUCKET,
-            "Key": s3_key,
-            "ContentType": file_type or "application/octet-stream"
-        },
-        ExpiresIn=300
-    )
+        # generate safe key
+        file_id = str(uuid.uuid4())
+        safe_name = file_name.replace(" ", "_")
+        s3_key = f"uploads/{file_id}_{safe_name}"
 
-    return {
-        "statusCode": 200,
-        "headers": cors_headers(),
-        "body": json.dumps({
+        presigned_url = s3.generate_presigned_url(
+            ClientMethod="put_object",
+            Params={
+                "Bucket": UPLOAD_BUCKET,
+                "Key": s3_key,
+                "ContentType": file_type
+            },
+            ExpiresIn=300
+        )
+
+        return response(200, {
             "uploadUrl": presigned_url,
             "bucket": UPLOAD_BUCKET,
             "key": s3_key
         })
+
+    except Exception as e:
+        return response(500, {"error": str(e)})
+
+def response(code, body):
+    return {
+        "statusCode": code,
+        "headers": cors_headers(),
+        "body": json.dumps(body)
     }
 
 def cors_headers():
